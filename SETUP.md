@@ -119,7 +119,7 @@ sudo rm -rf python-cloudflare
    
 3. Download the latest copy of the generic DNS seeder app by running the following cmd in the terminal:
 
-   `git clone https://github.com/team-exor/generic-seeder.git`
+   `git clone https://github.com/KABBERRY/generic-seeder.git`
 4. Navigate to the newly downloaded DNS seeder app directory by running the following cmd in the terminal:
 
    `cd generic-seeder`
