@@ -493,6 +493,51 @@ extern "C" void* ThreadBlockReader(void*) {
 	return nullptr;
 }
 
+bool isDumpDbRunning = false;
+
+extern "C" void DumpDb() {
+  if (isDumpDbRunning == true) {
+    while (isDumpDbRunning) {
+        sleep (1); // Wait for the dump to complete
+    }
+    return;
+  }
+  isDumpDbRunning = true;
+  vector<CAddrReport> v = db.GetAll();
+  sort(v.begin(), v.end(), StatCompare);
+  FILE *f = fopen("dnsseed.dat.new","w+");
+  if (f) {
+    {
+      CAutoFile cf(f);
+      cf << db;
+    }
+    rename("dnsseed.dat.new", "dnsseed.dat");
+  }
+  FILE *d = fopen("dnsseed.dump", "w");
+  fprintf(d, "# address                                        good  lastSuccess    %%(2h)   %%(8h)   %%(1d)   %%(7d)  %%(30d)  blocks      svcs  version\n");
+  double stat[5]={0,0,0,0,0};
+  for (vector<CAddrReport>::const_iterator it = v.begin(); it < v.end(); it++) {
+    CAddrReport rep = *it;
+    fprintf(d, "%-47s  %4d  %11" PRId64 "  %6.2f%% %6.2f%% %6.2f%% %6.2f%% %6.2f%%  %6i  %08" PRIx64 "  %5i \"%s\"\n", rep.ip.ToString().c_str(), (int)rep.fGood, rep.lastSuccess, 100.0*rep.uptime[0], 100.0*rep.uptime[1], 100.0*rep.uptime[2], 100.0*rep.uptime[3], 100.0*rep.uptime[4], rep.blocks, rep.services, rep.clientVersion, rep.clientSubVersion.c_str());
+    stat[0] += rep.uptime[0];
+    stat[1] += rep.uptime[1];
+    stat[2] += rep.uptime[2];
+    stat[3] += rep.uptime[3];
+    stat[4] += rep.uptime[4];
+  }
+  fclose(d);
+  FILE *ff = fopen("dnsstats.log", "a");
+  fprintf(ff, "%llu %g %g %g %g %g\n", (unsigned long long)(time(NULL)), stat[0], stat[1], stat[2], stat[3], stat[4]);
+  fclose(ff);
+  isDumpDbRunning = false;
+}
+
+extern "C" void SIGINTHandler(int signum) {
+  DumpDb();
+  exit(0);
+}
+
+
 extern "C" void* ThreadDumper(void*) {
   int count = 0;
   do {
@@ -500,42 +545,7 @@ extern "C" void* ThreadDumper(void*) {
     if (count < 5)
         count++;
     {
-      vector<CAddrReport> v = db.GetAll();
-      sort(v.begin(), v.end(), StatCompare);
-      FILE *f = fopen("dnsseed.dat.new","w+");
-      if (f) {
-        {
-          CAutoFile cf(f);
-          cf << db;
-        }
-        rename("dnsseed.dat.new", "dnsseed.dat");
-      }
-      FILE *d = fopen("dnsseed.dump", "w");
-	  fprintf(d, "# address                                        good  lastSuccess    %%(2h)   %%(8h)   %%(1d)   %%(7d)  %%(30d)  blocks      svcs  version\n");
-      double stat[5]={0,0,0,0,0};
-      for (vector<CAddrReport>::const_iterator it = v.begin(); it < v.end(); it++) {
-        CAddrReport rep = *it;
-
-		if (fDumpAll) {
-			// Show complete list of nodes with all applicable info gathered for each
-			char cversionbuffer[7];
-			snprintf(cversionbuffer, 7, "%d", rep.clientVersion);
-			char blockbuffer[9];
-			snprintf(blockbuffer, 9, "%d", rep.blocks);
-			fprintf(d, "%-47s  %4d  %11" PRId64 "  %6.2f%% %6.2f%% %6.2f%% %6.2f%% %6.2f%%  %s  %08" PRIx64 "  %s \"%s\"\n", rep.ip.ToString().c_str(), rep.fGood && rep.blocks>0 && rep.clientVersion>0 && strlen(rep.clientSubVersion.c_str())>0?1:0, rep.lastSuccess, 100.0*rep.uptime[0], 100.0*rep.uptime[1], 100.0*rep.uptime[2], 100.0*rep.uptime[3], 100.0*rep.uptime[4], rep.blocks<1?"Unknown":blockbuffer, rep.services, rep.clientVersion<1?"Unknown":cversionbuffer, strlen(rep.clientSubVersion.c_str())==0?"Unknown":rep.clientSubVersion.c_str());
-		} else
-			fprintf(d, "%-47s  %4d  %11" PRId64 "  %6.2f%% %6.2f%% %6.2f%% %6.2f%% %6.2f%%  %6i  %08" PRIx64 "  %5i \"%s\"\n", rep.ip.ToString().c_str(), (int)rep.fGood, rep.lastSuccess, 100.0*rep.uptime[0], 100.0*rep.uptime[1], 100.0*rep.uptime[2], 100.0*rep.uptime[3], 100.0*rep.uptime[4], rep.blocks, rep.services, rep.clientVersion, rep.clientSubVersion.c_str());
-
-        stat[0] += rep.uptime[0];
-        stat[1] += rep.uptime[1];
-        stat[2] += rep.uptime[2];
-        stat[3] += rep.uptime[3];
-        stat[4] += rep.uptime[4];
-      }
-      fclose(d);
-      FILE *ff = fopen("dnsstats.log", "a");
-      fprintf(ff, "%llu %g %g %g %g %g\n", (unsigned long long)(time(NULL)), stat[0], stat[1], stat[2], stat[3], stat[4]);
-      fclose(ff);
+      DumpDb();
     }
   } while(1);
   return nullptr;
@@ -793,6 +803,7 @@ int main(int argc, char **argv) {
   }
   pthread_attr_destroy(&attr_crawler);
   printf("done\n");
+  signal(SIGINT, SIGINTHandler);
   pthread_create(&threadStats, NULL, ThreadStats, NULL);
   pthread_create(&threadDump, NULL, ThreadDumper, NULL);
   void* res;
